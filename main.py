@@ -155,8 +155,8 @@ def stream_elevenlabs_audio(text: str):
         print("[ELEVEN ERROR] ELEVENLABS_API_KEY no configurada.")
         return
         
-    # Salida PCM 24kHz nativa exacta para el codec de audio I2S del ESP32
-    tts_url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream?output_format=pcm_24000"
+    # Salida PCM 16kHz nativa exacta para el codec de audio I2S (ES8311 @ 16kHz)
+    tts_url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream?output_format=pcm_16000"
     payload = json.dumps({
         "text": text,
         "model_id": "eleven_flash_v2_5",
