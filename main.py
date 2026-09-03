@@ -5,6 +5,7 @@ import json
 import re
 import datetime
 import urllib.request
+import urllib.error
 import ssl
 import wave
 from fastapi import FastAPI, Request, Response
@@ -15,11 +16,17 @@ import uvicorn
 # Contexto SSL para llamadas seguras
 ssl_ctx = ssl.create_default_context()
 
-# --- Configuración de Entorno (API Keys) ---
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "FGY2WhTYpPnrIDTdsKH5") # Laura
+def get_groq_key():
+    return os.getenv("GROQ_API_KEY", "").strip()
+
+def get_gemini_key():
+    return os.getenv("GEMINI_API_KEY", "").strip()
+
+def get_eleven_key():
+    return os.getenv("ELEVENLABS_API_KEY", "").strip()
+
+def get_eleven_voice_id():
+    return os.getenv("ELEVENLABS_VOICE_ID", "FGY2WhTYpPnrIDTdsKH5").strip()
 
 app = FastAPI(title="EVA Cloud Assistant", version="3.0")
 
@@ -31,29 +38,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Historial de conversación en memoria (últimas 8 interacciones)
 conversation_history = []
 MAX_HISTORY = 8
 
-# Estado del Clima / Widget para la barra superior de EVA
 widget_state = {
     "temp": "24°C",
     "icon": "SUN"
 }
 
-# --- 1. TRANSCRIPCIÓN CON GROQ WHISPER (STT con módulo nativo wave) ---
+# --- 1. TRANSCRIPCIÓN CON GROQ WHISPER ---
 def transcribe_audio_groq(pcm_bytes: bytes) -> str:
-    """Convierte audio PCM 16kHz a WAV con el módulo wave nativo y transcribe con Groq en <0.2s."""
-    if not GROQ_API_KEY:
+    key = get_groq_key()
+    if not key:
         print("[STT ERROR] GROQ_API_KEY no configurada.")
         return ""
     try:
-        # Generar archivo WAV en memoria usando solo la librería estándar de Python
         wav_io = io.BytesIO()
         with wave.open(wav_io, "wb") as wav_file:
-            wav_file.setnchannels(1)      # Mono
-            wav_file.setsampwidth(2)     # 16-bit
-            wav_file.setframerate(16000) # 16kHz
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(16000)
             wav_file.writeframes(pcm_bytes)
         wav_bytes = wav_io.getvalue()
         
@@ -77,7 +81,7 @@ def transcribe_audio_groq(pcm_bytes: bytes) -> str:
         payload = b"\r\n".join(body)
 
         req = urllib.request.Request("https://api.groq.com/openai/v1/audio/transcriptions", data=payload, headers={
-            "Authorization": f"Bearer {GROQ_API_KEY.strip()}",
+            "Authorization": f"Bearer {key}",
             "Content-Type": f"multipart/form-data; boundary={boundary}",
             "User-Agent": "Mozilla/5.0"
         })
@@ -90,10 +94,9 @@ def transcribe_audio_groq(pcm_bytes: bytes) -> str:
 
 # --- 2. INTELIGENCIA Y EMOCIONES CON GOOGLE GEMINI FLASH ---
 def generate_gemini_reply(user_prompt: str) -> tuple[str, str]:
-    """Genera respuesta con Gemini Flash y extrae la emoción para la pantalla."""
     global conversation_history
-    
-    if not GEMINI_API_KEY:
+    key = get_gemini_key()
+    if not key:
         print("[GEMINI ERROR] GEMINI_API_KEY no configurada.")
         return "Hola, necesito que configures mi clave de Gemini en Render.", "SCEPTIC"
         
@@ -110,7 +113,7 @@ def generate_gemini_reply(user_prompt: str) -> tuple[str, str]:
         contents.append({"role": msg["role"], "parts": [{"text": msg["content"]}]})
     contents.append({"role": "user", "parts": [{"text": user_prompt}]})
 
-    gem_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={GEMINI_API_KEY.strip()}"
+    gem_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={key}"
     payload = json.dumps({
         "system_instruction": {"parts": [{"text": system_prompt}]},
         "contents": contents,
@@ -146,12 +149,12 @@ def generate_gemini_reply(user_prompt: str) -> tuple[str, str]:
 
 # --- 3. SÍNTESIS DE VOZ CON ELEVENLABS (Stream PCM 16kHz) ---
 def stream_elevenlabs_audio(text: str):
-    """Genera stream de audio PCM 16-bit 16kHz mono directo desde ElevenLabs."""
-    if not ELEVENLABS_API_KEY:
+    key = get_eleven_key()
+    voice_id = get_eleven_voice_id()
+    if not key:
         print("[ELEVEN ERROR] ELEVENLABS_API_KEY no configurada.")
         return
         
-    voice_id = ELEVENLABS_VOICE_ID.strip() if ELEVENLABS_VOICE_ID else "FGY2WhTYpPnrIDTdsKH5"
     tts_url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream?output_format=pcm_16000"
     payload = json.dumps({
         "text": text,
@@ -162,29 +165,40 @@ def stream_elevenlabs_audio(text: str):
         }
     }).encode("utf-8")
 
-    req = urllib.request.Request(tts_url, data=tts_payload, headers={
-        "xi-api-key": ELEVENLABS_API_KEY.strip(),
+    req = urllib.request.Request(tts_url, data=payload, headers={
+        "xi-api-key": key,
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0"
     })
     
-    with urllib.request.urlopen(req, context=ssl_ctx, timeout=12) as response:
-        while True:
-            chunk = response.read(1024)
-            if not chunk:
-                break
-            yield chunk
+    try:
+        with urllib.request.urlopen(req, context=ssl_ctx, timeout=15) as response:
+            while True:
+                chunk = response.read(1024)
+                if not chunk:
+                    break
+                yield chunk
+    except urllib.error.HTTPError as e:
+        print(f"[ELEVEN HTTP ERROR] {e.code}: {e.read().decode()}")
+    except Exception as e:
+        print(f"[ELEVEN ERROR] {e}")
 
 # --- ENDPOINTS HTTP ---
 
 @app.get("/")
 @app.get("/health")
 def health():
-    return {"status": "online", "service": "EVA Cloud Assistant v3.0", "time": datetime.datetime.now().isoformat()}
+    return {
+        "status": "online",
+        "service": "EVA Cloud Assistant v3.0",
+        "has_groq": bool(get_groq_key()),
+        "has_gemini": bool(get_gemini_key()),
+        "has_eleven": bool(get_eleven_key()),
+        "time": datetime.datetime.now().isoformat()
+    }
 
 @app.get("/widget_data")
 def widget_data():
-    """Retorna hora, fecha y clima actual para la barra superior de EVA."""
     now = datetime.datetime.now()
     dias = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
     meses = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
