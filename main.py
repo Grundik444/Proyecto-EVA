@@ -133,7 +133,7 @@ def generate_gemini_reply(user_prompt: str) -> tuple[str, str]:
         contents.append({"role": msg["role"], "parts": [{"text": msg["content"]}]})
     contents.append({"role": "user", "parts": [{"text": user_prompt}]})
 
-    gem_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={key}"
+    gem_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={key}"
     payload = json.dumps({
         "system_instruction": {"parts": [{"text": system_prompt}]},
         "contents": contents,
