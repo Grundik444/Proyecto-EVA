@@ -9,7 +9,7 @@ import urllib.error
 import ssl
 import wave
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
@@ -147,15 +147,14 @@ def generate_gemini_reply(user_prompt: str) -> tuple[str, str]:
         print(f"[GEMINI ERROR] {e}")
         return "Disculpa, tuve un microcorte en mis circuitos neuronales. ¿Me repites?", "SCEPTIC"
 
-# --- 3. SÍNTESIS DE VOZ CON ELEVENLABS (Stream PCM 16kHz) ---
-def stream_elevenlabs_audio(text: str):
+# --- 3. SÍNTESIS DE VOZ CON ELEVENLABS (PCM 16kHz Puro con Content-Length) ---
+def synthesize_elevenlabs_audio(text: str) -> bytes:
     key = get_eleven_key()
     voice_id = get_eleven_voice_id()
     if not key:
         print("[ELEVEN ERROR] ELEVENLABS_API_KEY no configurada.")
-        return
+        return b""
         
-    # Salida PCM 16kHz nativa exacta para el codec de audio I2S (ES8311 @ 16kHz)
     tts_url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream?output_format=pcm_16000"
     payload = json.dumps({
         "text": text,
@@ -174,15 +173,13 @@ def stream_elevenlabs_audio(text: str):
     
     try:
         with urllib.request.urlopen(req, context=ssl_ctx, timeout=15) as response:
-            while True:
-                chunk = response.read(1024)
-                if not chunk:
-                    break
-                yield chunk
+            return response.read()
     except urllib.error.HTTPError as e:
         print(f"[ELEVEN HTTP ERROR] {e.code}: {e.read().decode()}")
+        return b""
     except Exception as e:
         print(f"[ELEVEN ERROR] {e}")
+        return b""
 
 # --- ENDPOINTS HTTP ---
 
@@ -236,14 +233,18 @@ async def handle_audio(request: Request):
     t_gem = time.time()
     print(f"[EVA ({emotion})] \"{reply_text}\" ({t_gem - t_stt:.2f}s)")
 
+    audio_bytes = synthesize_elevenlabs_audio(reply_text)
+    t_tts = time.time()
+    print(f"[TTS] Audio generado: {len(audio_bytes)} bytes ({t_tts - t_gem:.2f}s)")
+
     headers = {
-        "Content-Type": "application/octet-stream",
         "X-Eva-Emotion": emotion,
         "X-Keep-Listening": "false",
         "X-Eva-Card": "NONE"
     }
 
-    return StreamingResponse(stream_elevenlabs_audio(reply_text), headers=headers)
+    # Retornar respuesta binaria con Content-Length exacto (sin chunked framing)
+    return Response(content=audio_bytes, media_type="application/octet-stream", headers=headers)
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))
