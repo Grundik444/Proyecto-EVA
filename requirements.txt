@@ -1,5 +1,2 @@
-fastapi==0.115.6
-uvicorn==0.34.0
-pydub==0.25.1
-static-ffmpeg==2.8
-python-dotenv==1.0.1
+fastapi
+uvicorn

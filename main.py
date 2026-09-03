@@ -6,28 +6,20 @@ import re
 import datetime
 import urllib.request
 import ssl
-from typing import Optional
+import wave
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-from pydub import AudioSegment
-import static_ffmpeg
-
-# Inicializar ffmpeg para procesamiento de audio en memoria
-try:
-    static_ffmpeg.add_paths()
-except Exception as e:
-    print(f"[FFMPEG] Info: {e}")
 
 # Contexto SSL para llamadas seguras
 ssl_ctx = ssl.create_default_context()
 
-# --- Configuración de Entorno (API Keys leídas desde variables de Render) ---
+# --- Configuración de Entorno (API Keys) ---
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "FGY2WhTYpPnrIDTdsKH5") # Laura (Español natural)
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "FGY2WhTYpPnrIDTdsKH5") # Laura
 
 app = FastAPI(title="EVA Cloud Assistant", version="3.0")
 
@@ -49,16 +41,20 @@ widget_state = {
     "icon": "SUN"
 }
 
-# --- 1. TRANSCRIPCIÓN CON GROQ WHISPER (STT Ultra-rápido) ---
+# --- 1. TRANSCRIPCIÓN CON GROQ WHISPER (STT con módulo nativo wave) ---
 def transcribe_audio_groq(pcm_bytes: bytes) -> str:
-    """Convierte audio PCM 16kHz a WAV y lo transcribe con Groq Whisper en <0.2s."""
+    """Convierte audio PCM 16kHz a WAV con el módulo wave nativo y transcribe con Groq en <0.2s."""
     if not GROQ_API_KEY:
         print("[STT ERROR] GROQ_API_KEY no configurada.")
         return ""
     try:
-        audio = AudioSegment.from_raw(io.BytesIO(pcm_bytes), sample_width=2, frame_rate=16000, channels=1)
+        # Generar archivo WAV en memoria usando solo la librería estándar de Python
         wav_io = io.BytesIO()
-        audio.export(wav_io, format="wav")
+        with wave.open(wav_io, "wb") as wav_file:
+            wav_file.setnchannels(1)      # Mono
+            wav_file.setsampwidth(2)     # 16-bit
+            wav_file.setframerate(16000) # 16kHz
+            wav_file.writeframes(pcm_bytes)
         wav_bytes = wav_io.getvalue()
         
         boundary = "----WebKitFormBoundaryEVACloudSTT777"
@@ -81,7 +77,7 @@ def transcribe_audio_groq(pcm_bytes: bytes) -> str:
         payload = b"\r\n".join(body)
 
         req = urllib.request.Request("https://api.groq.com/openai/v1/audio/transcriptions", data=payload, headers={
-            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Authorization": f"Bearer {GROQ_API_KEY.strip()}",
             "Content-Type": f"multipart/form-data; boundary={boundary}",
             "User-Agent": "Mozilla/5.0"
         })
@@ -114,7 +110,7 @@ def generate_gemini_reply(user_prompt: str) -> tuple[str, str]:
         contents.append({"role": msg["role"], "parts": [{"text": msg["content"]}]})
     contents.append({"role": "user", "parts": [{"text": user_prompt}]})
 
-    gem_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={GEMINI_API_KEY}"
+    gem_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={GEMINI_API_KEY.strip()}"
     payload = json.dumps({
         "system_instruction": {"parts": [{"text": system_prompt}]},
         "contents": contents,
@@ -155,7 +151,8 @@ def stream_elevenlabs_audio(text: str):
         print("[ELEVEN ERROR] ELEVENLABS_API_KEY no configurada.")
         return
         
-    tts_url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}/stream?output_format=pcm_16000"
+    voice_id = ELEVENLABS_VOICE_ID.strip() if ELEVENLABS_VOICE_ID else "FGY2WhTYpPnrIDTdsKH5"
+    tts_url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream?output_format=pcm_16000"
     payload = json.dumps({
         "text": text,
         "model_id": "eleven_flash_v2_5",
@@ -166,7 +163,7 @@ def stream_elevenlabs_audio(text: str):
     }).encode("utf-8")
 
     req = urllib.request.Request(tts_url, data=tts_payload, headers={
-        "xi-api-key": ELEVENLABS_API_KEY,
+        "xi-api-key": ELEVENLABS_API_KEY.strip(),
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0"
     })
@@ -234,5 +231,5 @@ async def handle_audio(request: Request):
     return StreamingResponse(stream_elevenlabs_audio(reply_text), headers=headers)
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8000))
+    port = int(os.getenv("PORT", "8000"))
     uvicorn.run("main:app", host="0.0.0.0", port=port)
