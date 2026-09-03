@@ -158,7 +158,7 @@ def synthesize_elevenlabs_audio(text: str) -> bytes:
     tts_url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream?output_format=pcm_16000"
     payload = json.dumps({
         "text": text,
-        "model_id": "eleven_flash_v2_5",
+        "model_id": "eleven_multilingual_v2",
         "voice_settings": {
             "stability": 0.5,
             "similarity_boost": 0.75
