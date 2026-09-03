@@ -192,7 +192,7 @@ def synthesize_elevenlabs_audio(text: str) -> bytes:
     })
     
     try:
-        with urllib.request.urlopen(req, context=ssl_ctx, timeout=15) as response:
+        with urllib.request.urlopen(req, context=ssl_ctx, timeout=40) as response:
             return response.read()
     except urllib.error.HTTPError as e:
         print(f"[ELEVEN HTTP ERROR] {e.code}: {e.read().decode()}")
@@ -217,7 +217,9 @@ def health():
 
 @app.get("/widget_data")
 def widget_data():
-    now = datetime.datetime.now()
+    # Argentina = UTC-3 (sin horario de verano)
+    tz_arg = datetime.timezone(datetime.timedelta(hours=-3))
+    now = datetime.datetime.now(tz=tz_arg)
     dias = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
     meses = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
     
