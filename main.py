@@ -47,18 +47,38 @@ widget_state = {
 }
 
 # --- 1. TRANSCRIPCIÓN CON GROQ WHISPER ---
+def stereo_to_mono(pcm_bytes: bytes) -> bytes:
+    """Convierte PCM estéreo 16-bit (L, R interleaved) a mono promediando L+R.
+    El ESP32 graba en modo I2S RIGHT_LEFT (estéreo), por lo que cada frame
+    contiene 2 muestras int16. Whisper necesita mono a 16kHz."""
+    import struct
+    n = len(pcm_bytes) // 4  # número de frames estéreo (L+R = 4 bytes cada uno)
+    if n == 0:
+        return pcm_bytes  # datos insuficientes, devolver tal cual
+    mono = bytearray(n * 2)
+    for i in range(n):
+        l = struct.unpack_from('<h', pcm_bytes, i * 4)[0]
+        r = struct.unpack_from('<h', pcm_bytes, i * 4 + 2)[0]
+        avg = (l + r) // 2
+        struct.pack_into('<h', mono, i * 2, avg)
+    return bytes(mono)
+
 def transcribe_audio_groq(pcm_bytes: bytes) -> str:
     key = get_groq_key()
     if not key:
         print("[STT ERROR] GROQ_API_KEY no configurada.")
         return ""
     try:
+        # Convertir estéreo a mono antes de enviar a Whisper
+        mono_bytes = stereo_to_mono(pcm_bytes)
+        print(f"[STT] PCM recibido: {len(pcm_bytes)} bytes → mono: {len(mono_bytes)} bytes ({len(mono_bytes)//32000:.1f}s)")
+
         wav_io = io.BytesIO()
         with wave.open(wav_io, "wb") as wav_file:
             wav_file.setnchannels(1)
             wav_file.setsampwidth(2)
             wav_file.setframerate(16000)
-            wav_file.writeframes(pcm_bytes)
+            wav_file.writeframes(mono_bytes)
         wav_bytes = wav_io.getvalue()
         
         boundary = "----WebKitFormBoundaryEVACloudSTT777"
